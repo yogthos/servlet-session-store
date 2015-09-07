@@ -1,19 +1,23 @@
 (ns servlet-session-store.core
-  (:use [ring.middleware.session.store :only (SessionStore)])
-  (:import (javax.servlet.http HttpServletRequest HttpSession)))
+  (:require [ring.middleware.session.store :refer [SessionStore]])
+  (:import  [javax.servlet.http HttpServletRequest HttpSession]))
 
 (defprotocol HttpSessionCoercion
-  (^HttpSession as-http-session [_]))
+  (^HttpSession as-http-session [_ _]))
 
 (extend-protocol HttpSessionCoercion
   java.util.Map
-  (as-http-session [m] (as-http-session (:servlet-request m)))
+  (as-http-session [m options] (as-http-session (:servlet-request m) options))
 
   HttpServletRequest
-  (as-http-session [request] (.getSession request))
+  (as-http-session [request {:keys [timeout]}]
+    (let [session (.getSession request)]
+      (when timeout
+        (.setMaxInactiveInterval session))
+      session))
 
   HttpSession
-  (as-http-session [session] session))
+  (as-http-session [session _] session))
 
 (deftype ServletSessionStore [^HttpSession hs]
   SessionStore
@@ -21,11 +25,13 @@
   (write-session [_ key data] (.setAttribute hs ^String key data))
   (delete-session [_ key] (.removeAttribute hs ^String key)))
 
-(defn servlet-session-store [http-session-spec]
+(defn servlet-session-store [request options]
   (ServletSessionStore.
-   (as-http-session http-session-spec)))
+   (as-http-session request options)))
 
-(defn wrap-servlet-session [handler]
-  (fn [request]
+(defn wrap-servlet-session
+  ([handler] (wrap-servlet-session handler {}))
+  ([handler options]
+   (fn [request]
     (handler
-     (assoc request :session (servlet-session-store request)))))
+     (assoc request :session (servlet-session-store request options))))))
